@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from collections import namedtuple
 from enum import Enum
 from tempfile import TemporaryDirectory
+from typing import Callable
+from pandas import DataFrame
 import pandas
 import subprocess
 import os
@@ -43,26 +45,44 @@ class EnvCredentialGetter(CredentialGetter):
         password = self._get_env_var(self.password_var)
         return Credentials(username, password)
 
-data_loaders = {
-    FileType.EXCEL: pandas.read_excel,
-    FileType.CSV: pandas.read_csv
-}
-
 class Objr:
     def __init__(self, credential_getter: CredentialGetter):
         self.credential_getter = credential_getter
 
+    @staticmethod
+    def get_environment_copy() -> dict[str, str]:
+        return os.environ.copy()
+
+    @staticmethod
+    def run_download_process(script_path: str, uuid: str, directory: str, env: dict[str, str]) -> str:
+        output = subprocess.run(["Rscript", script_path, uuid, directory], env=env, check=True, capture_output=True)
+        return output.stdout.decode()
+
+    @staticmethod
+    def get_data_loader(file_type: FileType) -> Callable[[str], DataFrame]:
+        data_loaders: dict[FileType, Callable[[str], DataFrame]] = {
+            FileType.EXCEL: pandas.read_excel,
+            FileType.CSV: pandas.read_csv
+        }
+        return data_loaders[file_type]
+    
+    @staticmethod
+    def temp_dir():
+        return TemporaryDirectory()
+
     def download(self, uuid: str, file_type: FileType):
-        env = os.environ.copy()
+        env = self.get_environment_copy()
         credentials = self.credential_getter.get_credentials()
         env["OBJR_USR"] = credentials.username
         env["OBJR_PWD"] = credentials.password
-        script_path = os.path.join(os.path.direname(os.path.abspath(__file__)), "oc_download.R")
-        with TemporaryDirectory() as directory:
-            output = subprocess.run(["Rscript", script_path, uuid, directory], env=env, check=True, capture_output=True)
-            data_filename = output.stdout.decode().split()[1]
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "oc_download.R")
+        with self.temp_dir() as directory:
+            output = self.run_download_process(script_path=script_path, uuid=uuid, directory=directory, env=env)
+            quoted_data_filename = output.split()[1]
+            data_filename = quoted_data_filename[1:-1]
             data_path = os.path.join(directory, data_filename)
-            return data_loaders[file_type](data_path)
+            loader = self.get_data_loader(file_type)
+            return loader(data_path)
 
 def download_data(uuid: str, file_type: FileType, prompt: bool = False):
     credential_getter = PromptCredentialGetter() if prompt else EnvCredentialGetter()
