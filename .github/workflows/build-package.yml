@@ -1,0 +1,40 @@
+name: Release Package
+
+on: workflow_dispatch
+
+jobs:
+    build:
+        permissions:
+            contents: write
+        name: Build Package
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v2
+            - name: Install Hatch
+              run: pip install hatch
+            - name: Build Package
+              run: hatch build
+            - name: Get Package Version
+              run: |
+                version=$(python get_version.py)
+                echo "VERSION=$version" >> $GITHUB_ENV
+            - name: Create Release
+              id: create_release
+              uses: actions/create-release@v1
+              env:
+                GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                tag_name: v${{ env.VERSION }}
+                release_name: Release v${{ env.VERSION }}
+                draft: false
+                prerelease: false
+            - name: Upload Release Asset
+              uses: actions/upload-release-asset@v1
+              env:
+                GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                upload_url: ${{ steps.create_release.outputs.upload_url }}
+                asset_path: dist/objr_py-${{ env.VERSION }}-py3-none-any.whl
+                asset_name: objr_py-${{ env.VERSION }}-py3-none-any.whl
+                asset_content_type: application/zip
